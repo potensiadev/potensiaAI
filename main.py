@@ -2,6 +2,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from potensia_ai.core.config import settings
+from potensia_ai.api import keyword_extractor
+app.include_router(keyword_extractor.router)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -29,3 +31,6 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("potensia_ai.main:app", host="0.0.0.0", port=8000, reload=True)
+
+from potensia_ai.ai_tools.writer.router import router as writer_router
+app.include_router(writer_router, prefix="/api/write", tags=["Writer"])
