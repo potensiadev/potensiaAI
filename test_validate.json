@@ -1,0 +1,3 @@
+{
+  "content": "# Python Web Scraping Guide\n\n## Introduction\nWeb scraping is a powerful technique for extracting data from websites. Python provides excellent tools for this purpose.\n\n## Main Content\n### Using BeautifulSoup\nBeautifulSoup is a popular library for parsing HTML.\n\n### Example Code\n```python\nimport requests\nfrom bs4 import BeautifulSoup\n\nresponse = requests.get('https://example.com')\nsoup = BeautifulSoup(response.text, 'html.parser')\nprint(soup.title)\n```\n\n## FAQ\n**Q: Is web scraping legal?**\nA: Always check the website's robots.txt and terms of service.\n\n**Q: What libraries should I use?**\nA: BeautifulSoup, Selenium, and Scrapy are popular choices.\n\n## Conclusion\nPython makes web scraping accessible to everyone."
+}

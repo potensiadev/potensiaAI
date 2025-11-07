@@ -2,10 +2,10 @@
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from core.config import settings
 
-openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 # ============================================================
 # 🔹 SEO + AEO 통합 프롬프트
@@ -36,7 +36,7 @@ async def refine_topic(user_topic: str) -> str:
         # ✅ full_prompt: system + user 통합
         full_prompt = f"{TOPIC_PROMPT}\n\nInput: {user_topic}\nOutput:"
 
-        response = openai_client.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model=settings.MODEL_PRIMARY,          # 예: gpt-4o-mini
             messages=[
                 {"role": "system", "content": TOPIC_PROMPT},

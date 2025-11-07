@@ -6,14 +6,14 @@ import asyncio
 import datetime
 import random
 import traceback
-from openai import OpenAI
-from anthropic import Anthropic
+from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 from core.config import settings
 from ai_tools.writer.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from ai_tools.writer.topic_refiner import refine_topic
 
-openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 MAX_RETRY = 2               # 모델별 최대 재시도 횟수
 BACKOFF_MIN = 1             # 최소 대기 (초)
@@ -32,7 +32,7 @@ async def try_model(model_name: str, topic: str, user_prompt: str) -> str | None
     """GPT or Claude 실행 (실패 시 None 반환)"""
     try:
         if model_name == "GPT":
-            resp = openai_client.chat.completions.create(
+            resp = await openai_client.chat.completions.create(
                 model=settings.MODEL_PRIMARY,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -54,7 +54,7 @@ async def try_model(model_name: str, topic: str, user_prompt: str) -> str | None
             return text.strip()
 
         elif model_name == "Claude":
-            resp = claude_client.messages.create(
+            resp = await claude_client.messages.create(
                 model=settings.MODEL_FALLBACK,
                 max_tokens=5000,
                 temperature=0.7,
