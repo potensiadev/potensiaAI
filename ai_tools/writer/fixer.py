@@ -1,7 +1,4 @@
 # potensia_ai/ai_tools/writer/fixer.py
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 import asyncio
 import json
 import re
@@ -232,77 +229,107 @@ async def fix_content(
 
 교정된 콘텐츠만 반환하라 (메타 정보나 설명 없이)."""
 
-    try:
-        # OpenAI API 호출 (gpt-4o 사용)
-        log_fixer("OPENAI_CALL", "model=gpt-4o")
+    # Retry logic with exponential backoff
+    for attempt in range(settings.MAX_RETRIES):
+        try:
+            # OpenAI API 호출 (settings.MODEL_PRIMARY 사용)
+            log_fixer("OPENAI_CALL", f"model={settings.MODEL_PRIMARY}, attempt={attempt+1}/{settings.MAX_RETRIES}")
 
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o",
-            max_tokens=3000,
-            temperature=0.4,
-            messages=[
-                {"role": "system", "content": FIXER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ]
-        )
+            # Determine if this is a reasoning model
+            model_name_lower = settings.MODEL_PRIMARY.lower()
+            is_reasoning = any(keyword in model_name_lower for keyword in ["o1-", "o3-", "gpt-5"])
 
-        # 응답 추출
-        fixed_content = response.choices[0].message.content.strip()
-
-        if not fixed_content:
-            log_fixer("ERROR", "Empty response from OpenAI")
-            return {
-                "fixed_content": content,
-                "fix_summary": ["OpenAI 응답 오류 - 원본 반환"],
-                "added_FAQ": False,
-                "keyword_density": calculate_keyword_density(content, focus_keyphrase)
+            # Build API parameters based on model type
+            api_params = {
+                "model": settings.MODEL_PRIMARY,
+                "messages": [
+                    {"role": "system", "content": FIXER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
             }
 
-        # 후처리
-        fixed_content = post_process_content(fixed_content)
+            # Reasoning models use max_completion_tokens and don't support temperature
+            if is_reasoning:
+                api_params["max_completion_tokens"] = 3000
+            else:
+                api_params["max_tokens"] = 3000
+                api_params["temperature"] = 0.4
 
-        # FAQ 추가 여부 확인 (개선된 정규식)
-        had_faq = validation_report.get('has_faq', False)
-        now_has_faq = bool(re.search(r'(?:##\s*FAQ|##\s*자주\s*묻는\s*질문)', fixed_content, re.IGNORECASE))
-        added_faq = not had_faq and now_has_faq
+            response = await openai_client.chat.completions.create(**api_params)
 
-        # 키워드 밀도 계산
-        final_density = calculate_keyword_density(fixed_content, focus_keyphrase)
+            # 응답 추출
+            fixed_content = response.choices[0].message.content.strip()
 
-        # 수정 요약 생성
-        fix_summary = []
-        if added_faq:
-            fix_summary.append("FAQ 섹션 자동 추가")
-        if 'grammar_improvement' in fix_needs:
-            fix_summary.append("문법 및 가독성 개선")
-        if 'humanize_content' in fix_needs:
-            fix_summary.append("AI 탐지율 감소 (인간 문체 적용)")
-        if 'seo_optimization' in fix_needs:
-            fix_summary.append("SEO 최적화 적용")
-        if focus_keyphrase:
-            fix_summary.append(f"키워드 밀도 조정: {final_density}%")
+            if not fixed_content:
+                log_fixer("WARN", f"Empty response from OpenAI (attempt {attempt+1})")
+                if attempt < settings.MAX_RETRIES - 1:
+                    wait_time = min(settings.BACKOFF_MIN * (2 ** attempt), settings.BACKOFF_MAX)
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    return {
+                        "fixed_content": content,
+                        "fix_summary": ["OpenAI 응답 오류 - 원본 반환"],
+                        "added_FAQ": False,
+                        "keyword_density": calculate_keyword_density(content, focus_keyphrase)
+                    }
 
-        # 키워드 밀도가 범위를 벗어나면 추가 조정 필요 표시
-        if focus_keyphrase and (final_density < 1.5 or final_density > 2.5):
-            fix_summary.append(f"[주의] 키워드 밀도 범위 초과 ({final_density}%) - 수동 조정 권장")
+            # 성공 - 재시도 루프 탈출
+            break
 
-        log_fixer("SUCCESS", f"fixed_length={len(fixed_content)}, density={final_density}%")
+        except Exception as e:
+            log_fixer("ERROR", f"Attempt {attempt+1} failed: {str(e)}")
+            if attempt < settings.MAX_RETRIES - 1:
+                wait_time = min(settings.BACKOFF_MIN * (2 ** attempt), settings.BACKOFF_MAX)
+                log_fixer("INFO", f"Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                # 최종 실패
+                return {
+                    "fixed_content": content,
+                    "fix_summary": [f"교정 실패: {str(e)}"],
+                    "added_FAQ": False,
+                    "keyword_density": calculate_keyword_density(content, focus_keyphrase)
+                }
 
-        return {
-            "fixed_content": fixed_content,
-            "fix_summary": fix_summary if fix_summary else ["콘텐츠 전반적 품질 개선"],
-            "added_FAQ": added_faq,
-            "keyword_density": final_density
-        }
+    # 성공 시 후처리
+    # 후처리
+    fixed_content = post_process_content(fixed_content)
 
-    except Exception as e:
-        log_fixer("ERROR", str(e))
-        return {
-            "fixed_content": content,
-            "fix_summary": [f"교정 실패: {str(e)}"],
-            "added_FAQ": False,
-            "keyword_density": calculate_keyword_density(content, focus_keyphrase)
-        }
+    # FAQ 추가 여부 확인 (개선된 정규식)
+    had_faq = validation_report.get('has_faq', False)
+    now_has_faq = bool(re.search(r'(?:##\s*FAQ|##\s*자주\s*묻는\s*질문)', fixed_content, re.IGNORECASE))
+    added_faq = not had_faq and now_has_faq
+
+    # 키워드 밀도 계산
+    final_density = calculate_keyword_density(fixed_content, focus_keyphrase)
+
+    # 수정 요약 생성
+    fix_summary = []
+    if added_faq:
+        fix_summary.append("FAQ 섹션 자동 추가")
+    if 'grammar_improvement' in fix_needs:
+        fix_summary.append("문법 및 가독성 개선")
+    if 'humanize_content' in fix_needs:
+        fix_summary.append("AI 탐지율 감소 (인간 문체 적용)")
+    if 'seo_optimization' in fix_needs:
+        fix_summary.append("SEO 최적화 적용")
+    if focus_keyphrase:
+        fix_summary.append(f"키워드 밀도 조정: {final_density}%")
+
+    # 키워드 밀도가 범위를 벗어나면 추가 조정 필요 표시
+    if focus_keyphrase and (final_density < 1.5 or final_density > 2.5):
+        fix_summary.append(f"[주의] 키워드 밀도 범위 초과 ({final_density}%) - 수동 조정 권장")
+
+    log_fixer("SUCCESS", f"fixed_length={len(fixed_content)}, density={final_density}%")
+
+    return {
+        "fixed_content": fixed_content,
+        "fix_summary": fix_summary if fix_summary else ["콘텐츠 전반적 품질 개선"],
+        "added_FAQ": added_faq,
+        "keyword_density": final_density
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -380,4 +407,8 @@ pip install beautifulsoup4
 
 
 if __name__ == "__main__":
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
     asyncio.run(test_fixer())

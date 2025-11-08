@@ -1,8 +1,4 @@
 # potensia_ai/ai_tools/writer/validator.py
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 import asyncio
 import json
 import datetime

@@ -1,8 +1,4 @@
 # potensia_ai/ai_tools/writer/topic_refiner.py
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 import asyncio
 import logging
 from openai import AsyncOpenAI
