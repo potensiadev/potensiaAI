@@ -4,13 +4,17 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import datetime
-from fastapi import APIRouter, HTTPException
+import logging
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from ai_tools.writer.topic_refiner import refine_topic
 from ai_tools.writer.generator import generate_content
 from ai_tools.writer.validator import validate_content
 from ai_tools.writer.fixer import fix_content
+
+# Configure logging
+logger = logging.getLogger("api.router")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # APIRouter 설정
@@ -77,8 +81,15 @@ class ErrorResponse(BaseModel):
 # Helper: 로깅
 # ─────────────────────────────────────────────────────────────────────────────
 def log_api(endpoint: str, status: str, detail: str = ""):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [API:{endpoint}] [{status}] {detail}")
+    """Structured logging helper for API endpoints"""
+    log_message = f"[API:{endpoint}] [{status}] {detail}"
+
+    if status in ["ERROR", "WARN", "VALIDATE_WARN"]:
+        logger.warning(log_message)
+    elif status == "SUCCESS" or status.endswith("_OK"):
+        logger.info(log_message)
+    else:
+        logger.info(log_message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +98,12 @@ def log_api(endpoint: str, status: str, detail: str = ""):
 @router.post(
     "/write",
     response_model=WriteResponse,
-    responses={500: {"model": ErrorResponse}},
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": WriteResponse, "description": "Successfully generated content"},
+        400: {"model": ErrorResponse, "description": "Invalid request parameters"},
+        500: {"model": ErrorResponse, "description": "Internal server error"}
+    },
     summary="Generate complete blog article",
     description="Full pipeline: refine topic → generate content → validate quality"
 )
@@ -101,18 +117,34 @@ async def write_article(request: WriteRequest):
     log_api("write", "START", f"topic='{request.topic[:50]}...'")
 
     try:
+        # Input validation
+        if not request.topic or not request.topic.strip():
+            log_api("write", "ERROR", "Empty topic provided")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Topic cannot be empty"
+            )
+
         # Step 1: Topic refinement
         log_api("write", "REFINE", "Refining topic...")
         refined_topic = await refine_topic(request.topic)
         if not refined_topic or not refined_topic.strip():
-            raise HTTPException(status_code=500, detail="Topic refinement failed: empty result")
+            log_api("write", "ERROR", "Topic refinement returned empty result")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Content generation service unavailable"
+            )
         log_api("write", "REFINE_OK", f"refined='{refined_topic[:50]}...'")
 
         # Step 2: Content generation
         log_api("write", "GENERATE", "Generating content...")
         content = await generate_content(refined_topic)
         if not content or not content.strip():
-            raise HTTPException(status_code=500, detail="Content generation failed: empty result")
+            log_api("write", "ERROR", "Content generation returned empty result")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Content generation service unavailable"
+            )
         log_api("write", "GENERATE_OK", f"content_length={len(content)}")
 
         # Step 3: Content validation
@@ -141,8 +173,11 @@ async def write_article(request: WriteRequest):
     except HTTPException:
         raise
     except Exception as e:
-        log_api("write", "ERROR", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        log_api("write", "ERROR", f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during content generation"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -151,7 +186,12 @@ async def write_article(request: WriteRequest):
 @router.post(
     "/refine",
     response_model=RefineResponse,
-    responses={500: {"model": ErrorResponse}},
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": RefineResponse, "description": "Successfully refined topic"},
+        400: {"model": ErrorResponse, "description": "Invalid request parameters"},
+        500: {"model": ErrorResponse, "description": "Internal server error"}
+    },
     summary="Refine topic only",
     description="Converts a raw keyword into a natural, SEO/AEO-friendly question-style title"
 )
@@ -163,10 +203,22 @@ async def refine_topic_only(request: RefineRequest):
     log_api("refine", "START", f"topic='{request.topic[:50]}...'")
 
     try:
+        # Input validation
+        if not request.topic or not request.topic.strip():
+            log_api("refine", "ERROR", "Empty topic provided")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Topic cannot be empty"
+            )
+
         refined_topic = await refine_topic(request.topic)
 
         if not refined_topic or not refined_topic.strip():
-            raise HTTPException(status_code=500, detail="Topic refinement failed: empty result")
+            log_api("refine", "ERROR", "Topic refinement returned empty result")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Topic refinement service unavailable"
+            )
 
         log_api("refine", "SUCCESS", f"refined='{refined_topic[:50]}...'")
 
@@ -179,8 +231,11 @@ async def refine_topic_only(request: RefineRequest):
     except HTTPException:
         raise
     except Exception as e:
-        log_api("refine", "ERROR", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        log_api("refine", "ERROR", f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during topic refinement"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -189,7 +244,12 @@ async def refine_topic_only(request: RefineRequest):
 @router.post(
     "/validate",
     response_model=ValidateResponse,
-    responses={500: {"model": ErrorResponse}},
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": ValidateResponse, "description": "Successfully validated content"},
+        400: {"model": ErrorResponse, "description": "Invalid request parameters"},
+        500: {"model": ErrorResponse, "description": "Internal server error"}
+    },
     summary="Validate content quality",
     description="Analyzes blog content for grammar, human-like quality, SEO/AEO, and AI detection"
 )
@@ -205,6 +265,14 @@ async def validate_content_only(request: ValidateRequest):
     log_api("validate", "START", f"content_length={len(request.content)}")
 
     try:
+        # Input validation
+        if not request.content or not request.content.strip():
+            log_api("validate", "ERROR", "Empty content provided")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Content cannot be empty"
+            )
+
         validation = await validate_content(request.content, model=request.model)
 
         # Check if validation returned an error
@@ -221,9 +289,14 @@ async def validate_content_only(request: ValidateRequest):
             validation=validation
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log_api("validate", "ERROR", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        log_api("validate", "ERROR", f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during content validation"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,7 +305,12 @@ async def validate_content_only(request: ValidateRequest):
 @router.post(
     "/fix",
     response_model=FixResponse,
-    responses={500: {"model": ErrorResponse}},
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"model": FixResponse, "description": "Successfully fixed content"},
+        400: {"model": ErrorResponse, "description": "Invalid request parameters"},
+        500: {"model": ErrorResponse, "description": "Internal server error"}
+    },
     summary="Fix content issues",
     description="Automatically fix content based on validation report using GPT-4o"
 )
@@ -248,6 +326,21 @@ async def fix_content_issues(request: FixRequest):
     log_api("fix", "START", f"content_length={len(request.content)}")
 
     try:
+        # Input validation
+        if not request.content or not request.content.strip():
+            log_api("fix", "ERROR", "Empty content provided")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Content cannot be empty"
+            )
+
+        if not request.validation_report:
+            log_api("fix", "ERROR", "Empty validation report provided")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Validation report is required"
+            )
+
         result = await fix_content(
             content=request.content,
             validation_report=request.validation_report,
@@ -265,15 +358,25 @@ async def fix_content_issues(request: FixRequest):
             keyword_density=result['keyword_density']
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log_api("fix", "ERROR", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        log_api("fix", "ERROR", f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during content fixing"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Health Check 엔드포인트
 # ─────────────────────────────────────────────────────────────────────────────
-@router.get("/health", summary="Health check", description="Check if the Writer API is running")
+@router.get(
+    "/health",
+    status_code=status.HTTP_200_OK,
+    summary="Health check",
+    description="Check if the Writer API is running"
+)
 async def health_check():
     """서비스 상태 확인"""
     return {
