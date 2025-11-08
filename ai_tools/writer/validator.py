@@ -1,13 +1,18 @@
 # potensia_ai/ai_tools/writer/validator.py
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 import asyncio
 import json
 import datetime
 import re
+import logging
 from openai import AsyncOpenAI
 from core.config import settings
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("validator")
 
 openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -34,9 +39,10 @@ Analyze the content for:
 4. **FAQ Section** (has_faq: true/false)
    - Does the article include an FAQ section?
 
-5. **Suggestions** (list of strings)
+5. **Suggestions** (list of objects with type and message)
    - Specific, actionable improvements in Korean
-   - Examples: "서론이 너무 짧습니다", "AI가 쓴 티가 많이 납니다", "FAQ에 키워드를 더 추가하세요"
+   - Each suggestion must have a "type" (category) and "message" (description)
+   - Types: intro_missing, faq_missing, ai_tone, keyword_density_low, repetitive_phrases, etc.
 
 **IMPORTANT**: You must respond ONLY with valid JSON in this exact format:
 ```json
@@ -46,9 +52,9 @@ Analyze the content for:
   "seo_score": 9,
   "has_faq": true,
   "suggestions": [
-    "서론을 더 자연스럽게 작성하세요.",
-    "AI 특유의 반복적인 표현을 줄이세요.",
-    "메타 설명을 추가하세요."
+    {"type": "intro_improvement", "message": "서론을 더 자연스럽게 작성하세요."},
+    {"type": "ai_tone", "message": "AI 특유의 반복적인 표현을 줄이세요."},
+    {"type": "seo_meta", "message": "메타 설명을 추가하세요."}
   ]
 }
 ```
@@ -56,12 +62,27 @@ Analyze the content for:
 Do NOT include any explanation outside the JSON structure."""
 
 
-def log_validation(status: str, error: str | None = None):
-    """로그 출력 헬퍼"""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [VALIDATOR] [{status}]")
-    if error:
-        print(f" └─ Error: {error}\n")
+def log_validation(status: str, message: str | None = None, **kwargs):
+    """
+    구조화된 로깅 헬퍼
+
+    Args:
+        status: 상태 (START, OK, ERROR 등)
+        message: 로그 메시지
+        **kwargs: 추가 컨텍스트 정보
+    """
+    log_data = {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "module": "validator",
+        "status": status,
+        "message": message or "",
+        **kwargs
+    }
+
+    if status == "ERROR":
+        logger.error(json.dumps(log_data, ensure_ascii=False))
+    else:
+        logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
 async def validate_content(content: str, model: str | None = None) -> dict:
@@ -76,70 +97,129 @@ async def validate_content(content: str, model: str | None = None) -> dict:
         dict: 평가 결과 (grammar_score, human_score, seo_score, has_faq, suggestions)
               JSON 파싱 실패 시 {"raw_output": result} 반환
     """
-    log_validation("START")
+    log_validation("START", "Starting content validation", content_length=len(content), model=model)
+
+    # Use provided model or fall back to settings
+    model_to_use = model or settings.MODEL_PRIMARY
+
+    # Determine if this is a reasoning model (o1, o3, gpt-5, etc.)
+    model_name = model_to_use.lower()
+    is_reasoning_model = any(keyword in model_name
+                            for keyword in ["o1-", "o3-", "gpt-5"])
+
+    # Prepare API call parameters based on model type
+    api_params = {
+        "model": model_to_use,
+        "messages": [
+            {"role": "system", "content": VALIDATOR_PROMPT},
+            {"role": "user", "content": f"다음 블로그 글을 평가해주세요:\n\n{content}"}
+        ],
+    }
+
+    # Reasoning models use max_completion_tokens and don't support temperature
+    if is_reasoning_model:
+        api_params["max_completion_tokens"] = 800
+    else:
+        api_params["max_tokens"] = 800
+        api_params["temperature"] = 0.3
+
+    # Retry logic with exponential backoff
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await openai_client.chat.completions.create(**api_params)
+            result = response.choices[0].message.content
+
+            if not result or not result.strip():
+                log_validation("ERROR", "Empty response from OpenAI", attempt=attempt+1)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return {
+                    "scores": {"grammar": 0, "human": 0, "seo": 0},
+                    "has_faq": False,
+                    "issues": [],
+                    "raw_output": ""
+                }
+            break
+
+        except Exception as e:
+            log_validation("ERROR", f"OpenAI API call failed: {str(e)}",
+                          attempt=attempt+1, max_retries=max_retries)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            return {
+                "error": str(e),
+                "scores": {"grammar": 0, "human": 0, "seo": 0},
+                "has_faq": False,
+                "issues": [{"type": "validation_error", "message": "검증 중 오류가 발생했습니다."}],
+                "raw_output": ""
+            }
 
     try:
-        # Use provided model or fall back to settings
-        model_to_use = model or settings.MODEL_PRIMARY
 
-        # Determine if this is a reasoning model (o1, o3, gpt-5, etc.)
-        model_name = model_to_use.lower()
-        is_reasoning_model = any(keyword in model_name
-                                for keyword in ["o1-", "o3-", "gpt-5"])
+        # Enhanced JSON extraction with fallback
+        json_match = re.search(r'\{[\s\S]*\}', result)
+        if not json_match:
+            log_validation("ERROR", "No valid JSON found in response")
+            return {
+                "scores": {"grammar": 0, "human": 0, "seo": 0},
+                "has_faq": False,
+                "issues": [{"type": "parse_error", "message": "응답 파싱 실패"}],
+                "raw_output": result
+            }
 
-        # Prepare API call parameters based on model type
-        api_params = {
-            "model": model_to_use,
-            "messages": [
-                {"role": "system", "content": VALIDATOR_PROMPT},
-                {"role": "user", "content": f"다음 블로그 글을 평가해주세요:\n\n{content}"}
-            ],
+        result_clean = json_match.group().strip()
+        validated_data = json.loads(result_clean)
+
+        # 필수 키 검증
+        required_keys = ["grammar_score", "human_score", "seo_score", "has_faq", "suggestions"]
+        if not all(key in validated_data for key in required_keys):
+            log_validation("ERROR", "Missing required keys",
+                          expected=required_keys,
+                          got=list(validated_data.keys()))
+            return {
+                "scores": {"grammar": 0, "human": 0, "seo": 0},
+                "has_faq": False,
+                "issues": [{"type": "parse_error", "message": "응답 구조 오류"}],
+                "raw_output": result
+            }
+
+        # 구조화된 응답 반환 (Fixer 친화적)
+        structured_response = {
+            "scores": {
+                "grammar": validated_data["grammar_score"],
+                "human": validated_data["human_score"],
+                "seo": validated_data["seo_score"]
+            },
+            "has_faq": validated_data["has_faq"],
+            "issues": validated_data["suggestions"],  # Fixer가 바로 사용 가능
+
+            # 레거시 호환성을 위해 유지
+            "grammar_score": validated_data["grammar_score"],
+            "human_score": validated_data["human_score"],
+            "seo_score": validated_data["seo_score"],
+            "suggestions": [
+                item["message"] if isinstance(item, dict) else item
+                for item in validated_data["suggestions"]
+            ]
         }
 
-        # Reasoning models use max_completion_tokens and don't support temperature
-        if is_reasoning_model:
-            api_params["max_completion_tokens"] = 800
-        else:
-            api_params["max_tokens"] = 800
-            api_params["temperature"] = 0.3
+        log_validation("OK", "Validation completed successfully",
+                      grammar=structured_response["scores"]["grammar"],
+                      human=structured_response["scores"]["human"],
+                      seo=structured_response["scores"]["seo"])
 
-        response = await openai_client.chat.completions.create(**api_params)
+        return structured_response
 
-        result = response.choices[0].message.content
-
-        if not result or not result.strip():
-            log_validation("ERROR", "Empty response from OpenAI")
-            return {"raw_output": ""}
-
-        # JSON 파싱 시도
-        try:
-            # Remove markdown code blocks using regex (more robust)
-            result_clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", result.strip(), flags=re.DOTALL).strip()
-
-            validated_data = json.loads(result_clean)
-
-            # 필수 키 검증
-            required_keys = ["grammar_score", "human_score", "seo_score", "has_faq", "suggestions"]
-            if all(key in validated_data for key in required_keys):
-                log_validation("OK", f"Scores: G={validated_data['grammar_score']}, H={validated_data['human_score']}, SEO={validated_data['seo_score']}")
-                return validated_data
-            else:
-                log_validation("ERROR", f"Missing required keys. Got: {list(validated_data.keys())}")
-                return {"raw_output": result}
-
-        except json.JSONDecodeError as e:
-            log_validation("ERROR", f"JSON parse failed: {e}")
-            return {"raw_output": result}
-
-    except Exception as e:
-        log_validation("ERROR", f"OpenAI API call failed: {str(e)}")
+    except json.JSONDecodeError as e:
+        log_validation("ERROR", f"JSON parse failed: {str(e)}", raw_output=result[:200])
         return {
-            "error": str(e),
-            "grammar_score": 0,
-            "human_score": 0,
-            "seo_score": 0,
+            "scores": {"grammar": 0, "human": 0, "seo": 0},
             "has_faq": False,
-            "suggestions": ["검증 중 오류가 발생했습니다."]
+            "issues": [{"type": "parse_error", "message": f"JSON 파싱 실패: {str(e)}"}],
+            "raw_output": result
         }
 
 
@@ -204,6 +284,16 @@ A: BeautifulSoup, Selenium, Scrapy 등이 있습니다.
     print(json.dumps(result, indent=2, ensure_ascii=False))
     print("\n" + "="*80)
 
+    # 결과를 파일로 저장 (regression test용)
+    with open("validator_test_output.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print("\nTest results saved to: validator_test_output.json")
+
 
 if __name__ == "__main__":
+    # sys.path 설정 (테스트 모드에서만)
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
     asyncio.run(test_validator())
