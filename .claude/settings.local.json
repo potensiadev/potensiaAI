@@ -12,7 +12,9 @@
       "Bash(pip install:*)",
       "Bash(python test_openai.py:*)",
       "Bash(python test_topic_api.py:*)",
-      "Bash(python ai_tools/writer/generator.py:*)"
+      "Bash(python ai_tools/writer/generator.py:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

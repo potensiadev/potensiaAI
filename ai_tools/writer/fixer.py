@@ -95,34 +95,38 @@ def calculate_keyword_density(content: str, keyphrase: str) -> float:
 
 def extract_fix_needs(validation_report: dict) -> list[str]:
     """
-    Validation 리포트에서 수정이 필요한 항목 추출
+    Validation 리포트에서 수정이 필요한 항목 추출 (issues type 기반)
 
     Args:
         validation_report: Validator 결과
 
     Returns:
-        list: 수정 필요 항목 목록
+        list: 수정 필요 항목 목록 (type 기반)
     """
     fix_needs = []
 
-    # Validator 결과에서 개선사항 추출
-    suggestions = validation_report.get('suggestions', [])
+    # 새로운 구조: issues 리스트에서 type 추출
+    issues = validation_report.get('issues', [])
+    for issue in issues:
+        if isinstance(issue, dict) and 'type' in issue:
+            fix_needs.append(issue['type'])
 
-    # FAQ 누락 확인
+    # FAQ 누락 확인 (레거시 호환)
     has_faq = validation_report.get('has_faq', False)
-    if not has_faq:
+    if not has_faq and 'faq_missing' not in fix_needs:
         fix_needs.append('faq_missing')
 
-    # 점수 기반 개선 필요 항목
-    grammar_score = validation_report.get('grammar_score', 10)
-    human_score = validation_report.get('human_score', 10)
-    seo_score = validation_report.get('seo_score', 10)
+    # 점수 기반 개선 필요 항목 (레거시 호환)
+    scores = validation_report.get('scores', {})
+    grammar_score = scores.get('grammar', validation_report.get('grammar_score', 10))
+    human_score = scores.get('human', validation_report.get('human_score', 10))
+    seo_score = scores.get('seo', validation_report.get('seo_score', 10))
 
-    if grammar_score < 7:
+    if grammar_score < 7 and 'grammar_improvement' not in fix_needs:
         fix_needs.append('grammar_improvement')
-    if human_score < 7:
+    if human_score < 7 and 'humanize_content' not in fix_needs:
         fix_needs.append('humanize_content')
-    if seo_score < 7:
+    if seo_score < 7 and 'seo_optimization' not in fix_needs:
         fix_needs.append('seo_optimization')
 
     return fix_needs
@@ -257,9 +261,9 @@ async def fix_content(
         # 후처리
         fixed_content = post_process_content(fixed_content)
 
-        # FAQ 추가 여부 확인
+        # FAQ 추가 여부 확인 (개선된 정규식)
         had_faq = validation_report.get('has_faq', False)
-        now_has_faq = bool(re.search(r'##\s*FAQ|##\s*자주\s*묻는\s*질문', fixed_content, re.IGNORECASE))
+        now_has_faq = bool(re.search(r'(?:##\s*FAQ|##\s*자주\s*묻는\s*질문)', fixed_content, re.IGNORECASE))
         added_faq = not had_faq and now_has_faq
 
         # 키워드 밀도 계산

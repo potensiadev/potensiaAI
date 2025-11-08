@@ -1,4 +1,8 @@
 # potensia_ai/ai_tools/writer/validator.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import asyncio
 import json
 import datetime
@@ -72,7 +76,7 @@ def log_validation(status: str, message: str | None = None, **kwargs):
         **kwargs: 추가 컨텍스트 정보
     """
     log_data = {
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         "module": "validator",
         "status": status,
         "message": message or "",
