@@ -16,10 +16,26 @@ class Settings(BaseSettings):
     ENV: str = "development"
     DEBUG: bool = True
 
+    # API Keys
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
+
+    # Model Configuration
     MODEL_PRIMARY: str = "gpt-4o-mini"
     MODEL_FALLBACK: str = "claude-3-5-sonnet-20241022"
+
+    # Retry Configuration
+    MAX_RETRIES: int = 3
+    BACKOFF_MIN: int = 1  # seconds
+    BACKOFF_MAX: int = 8  # seconds
+
+    # API Timeout Configuration (seconds)
+    OPENAI_TIMEOUT: int = 60
+    ANTHROPIC_TIMEOUT: int = 60
+
+    # Model-specific Parameters
+    DEFAULT_TEMPERATURE: float = 0.7
+    DEFAULT_MAX_TOKENS: int = 2000
 
     class Config:
         env_file = ".env"

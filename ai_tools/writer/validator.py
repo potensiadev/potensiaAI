@@ -123,17 +123,17 @@ async def validate_content(content: str, model: str | None = None) -> dict:
         api_params["max_tokens"] = 800
         api_params["temperature"] = 0.3
 
-    # Retry logic with exponential backoff
-    max_retries = 3
-    for attempt in range(max_retries):
+    # Retry logic with exponential backoff (from settings)
+    for attempt in range(settings.MAX_RETRIES):
         try:
             response = await openai_client.chat.completions.create(**api_params)
             result = response.choices[0].message.content
 
             if not result or not result.strip():
                 log_validation("ERROR", "Empty response from OpenAI", attempt=attempt+1)
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                if attempt < settings.MAX_RETRIES - 1:
+                    wait_time = min(settings.BACKOFF_MIN * (2 ** attempt), settings.BACKOFF_MAX)
+                    await asyncio.sleep(wait_time)
                     continue
                 return {
                     "scores": {"grammar": 0, "human": 0, "seo": 0},
@@ -145,9 +145,10 @@ async def validate_content(content: str, model: str | None = None) -> dict:
 
         except Exception as e:
             log_validation("ERROR", f"OpenAI API call failed: {str(e)}",
-                          attempt=attempt+1, max_retries=max_retries)
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
+                          attempt=attempt+1, max_retries=settings.MAX_RETRIES)
+            if attempt < settings.MAX_RETRIES - 1:
+                wait_time = min(settings.BACKOFF_MIN * (2 ** attempt), settings.BACKOFF_MAX)
+                await asyncio.sleep(wait_time)
                 continue
             return {
                 "error": str(e),

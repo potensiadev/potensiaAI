@@ -1,14 +1,16 @@
 # potensia_ai/ai_tools/writer/topic_refiner.py
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
+import asyncio
+import logging
 from openai import AsyncOpenAI
 from core.config import settings
+
+# Configure logging
+logger = logging.getLogger("topic_refiner")
 
 openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 # ============================================================
-# 🔹 SEO + AEO 통합 프롬프트
+# SEO + AEO 통합 프롬프트
 # ============================================================
 TOPIC_PROMPT = """당신은 SEO 전문가입니다. 주어진 키워드를 자연스러운 질문형 제목으로 변환해주세요.
 
@@ -27,59 +29,100 @@ TOPIC_PROMPT = """당신은 SEO 전문가입니다. 주어진 키워드를 자�
 
 입력받은 키워드를 위 형식으로 변환해주세요."""
 
+
 # ============================================================
-# 🔹 메인 함수
+# Helper: 모델 타입 감지
+# ============================================================
+def is_reasoning_model(model_name: str) -> bool:
+    """Reasoning 모델 여부 판단"""
+    model_lower = model_name.lower()
+    return any(keyword in model_lower for keyword in ["o1-", "o3-", "gpt-5"])
+
+
+# ============================================================
+# 메인 함수
 # ============================================================
 async def refine_topic(user_topic: str) -> str:
-    """입력된 topic을 자연스러운 질문형 제목으로 변환"""
-    try:
-        # ✅ full_prompt: system + user 통합
-        full_prompt = f"{TOPIC_PROMPT}\n\nInput: {user_topic}\nOutput:"
+    """
+    입력된 topic을 자연스러운 질문형 제목으로 변환
 
-        response = await openai_client.chat.completions.create(
-            model=settings.MODEL_PRIMARY,          # 예: gpt-4o-mini
-            messages=[
-                {"role": "system", "content": TOPIC_PROMPT},
-                {"role": "user", "content": user_topic}
-            ],
-            # temperature=0.7,                      # gpt-4o-mini doesn't support custom temperature
-            max_completion_tokens=1500,              # High limit for reasoning models to produce output
-        )
+    Args:
+        user_topic: 원본 키워드 또는 주제
 
-        # ✅ 응답 안전 파싱
-        choice = response.choices[0]
-        content = None
+    Returns:
+        str: 변환된 질문형 제목
+    """
+    logger.info(f"Starting topic refinement: {user_topic[:50]}...")
 
-        if hasattr(choice, "message") and hasattr(choice.message, "content"):
-            content = choice.message.content
-        elif hasattr(choice, "output_text"):
-            content = choice.output_text
+    # 재시도 로직 with exponential backoff
+    for attempt in range(settings.MAX_RETRIES):
+        try:
+            # 모델별 파라미터 설정
+            api_params = {
+                "model": settings.MODEL_PRIMARY,
+                "messages": [
+                    {"role": "system", "content": TOPIC_PROMPT},
+                    {"role": "user", "content": user_topic}
+                ],
+            }
 
-        title = (content or "").strip().replace('"', "").replace("'", "")
+            # Reasoning 모델 vs 일반 모델
+            if is_reasoning_model(settings.MODEL_PRIMARY):
+                api_params["max_completion_tokens"] = 500
+            else:
+                api_params["max_tokens"] = 500
+                api_params["temperature"] = settings.DEFAULT_TEMPERATURE
 
-        # ✅ 예외: 빈 결과나 동일 반환일 경우 원문 유지
-        if not title or title.strip() == user_topic.strip():
-            print(f"[WARNING] 모델이 변환하지 않아 원문 유지: {user_topic}")
-            title = user_topic.strip()
+            response = await openai_client.chat.completions.create(**api_params)
 
-        print(f"[OK] Refined topic: {title}")
-        return title
+            # 응답 파싱
+            content = response.choices[0].message.content
+            title = (content or "").strip().replace('"', "").replace("'", "")
 
-    except Exception as e:
-        print(f"[TopicRefiner Error] {e}")
-        return user_topic
+            # 검증: 빈 결과나 동일 반환일 경우 원문 유지
+            if not title or title.strip() == user_topic.strip():
+                logger.warning(f"Model returned unchanged topic, keeping original: {user_topic}")
+                return user_topic.strip()
+
+            logger.info(f"Topic refined successfully: {title[:50]}...")
+            return title
+
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1}/{settings.MAX_RETRIES} failed: {str(e)}")
+
+            if attempt < settings.MAX_RETRIES - 1:
+                # Exponential backoff
+                wait_time = min(settings.BACKOFF_MIN * (2 ** attempt), settings.BACKOFF_MAX)
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+                continue
+
+            # 최종 실패 시 원본 반환
+            logger.error(f"All retry attempts failed, returning original topic: {user_topic}")
+            return user_topic
 
 
 # ============================================================
-# 🔹 단독 실행 테스트
+# 단독 실행 테스트
 # ============================================================
 if __name__ == "__main__":
-    import asyncio
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+    # Configure logging for test
+    logging.basicConfig(level=logging.INFO)
 
     async def test():
-        for t in ["생애최초주택담보대출"]:
-            print("입력:", t)
-            result = await refine_topic(t)
-            print("결과:", result, "\n")
+        test_topics = [
+            "생애최초주택담보대출",
+            "파이썬 웹 크롤링",
+            "목동 영어유치원"
+        ]
+
+        for topic in test_topics:
+            print(f"\n입력: {topic}")
+            result = await refine_topic(topic)
+            print(f"결과: {result}")
 
     asyncio.run(test())
