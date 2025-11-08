@@ -1,0 +1,19 @@
+{
+  "content": "# Python Web Scraping\n\n## Introduction\nWeb scraping is good. Web scraping is useful. Web scraping is great.\n\n## Main Content\nUse Python. Use BeautifulSoup. Use requests.\n\n## Conclusion\nPython is great.",
+  "validation_report": {
+    "grammar_score": 7,
+    "human_score": 6,
+    "seo_score": 5,
+    "has_faq": false,
+    "suggestions": [
+      "Add FAQ section",
+      "Remove repetitive phrases",
+      "Add more keywords"
+    ]
+  },
+  "metadata": {
+    "focus_keyphrase": "Python web scraping tutorial",
+    "language": "en",
+    "style": "guide"
+  }
+}

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ai_tools.writer.topic_refiner import refine_topic
 from ai_tools.writer.generator import generate_content
 from ai_tools.writer.validator import validate_content
+from ai_tools.writer.fixer import fix_content
 
 # ─────────────────────────────────────────────────────────────────────────────
 # APIRouter 설정
@@ -34,6 +35,12 @@ class ValidateRequest(BaseModel):
     model: str | None = Field(None, description="Optional: OpenAI model name")
 
 
+class FixRequest(BaseModel):
+    content: str = Field(..., min_length=1, description="Blog content to fix")
+    validation_report: dict = Field(..., description="Validator result")
+    metadata: dict | None = Field(None, description="Optional metadata (focus_keyphrase, language, style)")
+
+
 class WriteResponse(BaseModel):
     status: str
     input_topic: str
@@ -51,6 +58,14 @@ class RefineResponse(BaseModel):
 class ValidateResponse(BaseModel):
     status: str
     validation: dict
+
+
+class FixResponse(BaseModel):
+    status: str
+    fixed_content: str
+    fix_summary: list[str]
+    added_FAQ: bool
+    keyword_density: float
 
 
 class ErrorResponse(BaseModel):
@@ -208,6 +223,50 @@ async def validate_content_only(request: ValidateRequest):
 
     except Exception as e:
         log_api("validate", "ERROR", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 엔드포인트 4: /api/fix - 콘텐츠 자동 교정
+# ─────────────────────────────────────────────────────────────────────────────
+@router.post(
+    "/fix",
+    response_model=FixResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="Fix content issues",
+    description="Automatically fix content based on validation report using GPT-4o"
+)
+async def fix_content_issues(request: FixRequest):
+    """
+    Validator 리포트를 기반으로 콘텐츠를 자동 교정합니다:
+    - FAQ 자동 생성
+    - 키워드 밀도 조정 (1.5-2.5%)
+    - 반복 표현 제거
+    - AI 탐지율 감소
+    - SEO 최적화
+    """
+    log_api("fix", "START", f"content_length={len(request.content)}")
+
+    try:
+        result = await fix_content(
+            content=request.content,
+            validation_report=request.validation_report,
+            metadata=request.metadata
+        )
+
+        log_api("fix", "SUCCESS",
+               f"density={result['keyword_density']}%, FAQ={result['added_FAQ']}")
+
+        return FixResponse(
+            status="success",
+            fixed_content=result['fixed_content'],
+            fix_summary=result['fix_summary'],
+            added_FAQ=result['added_FAQ'],
+            keyword_density=result['keyword_density']
+        )
+
+    except Exception as e:
+        log_api("fix", "ERROR", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

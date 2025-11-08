@@ -53,6 +53,7 @@ async def root():
             "write": "/api/write",
             "refine": "/api/refine",
             "validate": "/api/validate",
+            "fix": "/api/fix",
             "health": "/api/health"
         }
     }
@@ -71,6 +72,7 @@ if __name__ == "__main__":
     print("  POST   http://localhost:8000/api/write     - Full pipeline")
     print("  POST   http://localhost:8000/api/refine    - Topic refinement only")
     print("  POST   http://localhost:8000/api/validate  - Content validation only")
+    print("  POST   http://localhost:8000/api/fix       - Auto-fix content issues")
     print("  GET    http://localhost:8000/api/health    - Health check")
     print("  GET    http://localhost:8000/docs          - Interactive API docs")
     print("="*80 + "\n")
