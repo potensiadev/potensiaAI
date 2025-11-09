@@ -1,9 +1,14 @@
-# potensia_ai/main.py
+# main.py
+import sys
+from pathlib import Path
+
+# Railway 배포를 위한 경로 설정
+sys.path.insert(0, str(Path(__file__).parent))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from potensia_ai.core.config import settings
-from potensia_ai.api import keyword_extractor
-app.include_router(keyword_extractor.router)
+from core.config import settings
+from api.router import router as writer_router  # ✅ 변경 포인트
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -11,26 +16,23 @@ app = FastAPI(
     description="AI-powered content automation platform",
 )
 
-# CORS 설정
+# ✅ CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # MVP에서는 전체 허용, 추후 제한 예정
+    allow_origins=["*"],  # MVP: 전체 허용 (추후 제한)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ✅ Health Check
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.ENV}
 
-# 추후 모듈 연결 예시
-# from potensia_ai.ai_tools.writer.router import router as writer_router
-# app.include_router(writer_router, prefix="/api/write", tags=["Writer"])
+# ✅ Writer Router 연결
+app.include_router(writer_router)  # /api/write/* 포함됨
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("potensia_ai.main:app", host="0.0.0.0", port=8000, reload=True)
-
-from potensia_ai.ai_tools.writer.router import router as writer_router
-app.include_router(writer_router, prefix="/api/write", tags=["Writer"])
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
