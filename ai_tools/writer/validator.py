@@ -14,7 +14,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("validator")
 
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+# Lazy initialization: 클라이언트를 필요할 때 생성
+_openai_client = None
+
+def get_openai_client():
+    """OpenAI 클라이언트를 lazy하게 초기화"""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    return _openai_client
 
 VALIDATOR_PROMPT = """You are an expert content quality analyst specializing in SEO, AEO (Answer Engine Optimization), and AI-written content detection.
 
@@ -126,7 +134,7 @@ async def validate_content(content: str, model: str | None = None) -> dict:
     # Retry logic with exponential backoff (from settings)
     for attempt in range(settings.MAX_RETRIES):
         try:
-            response = await openai_client.chat.completions.create(**api_params)
+            response = await get_openai_client().chat.completions.create(**api_params)
             result = response.choices[0].message.content
 
             if not result or not result.strip():

@@ -12,8 +12,23 @@ from ai_tools.writer.topic_refiner import refine_topic
 # Configure logging
 logger = logging.getLogger("generator")
 
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+# Lazy initialization: 클라이언트를 필요할 때 생성
+_openai_client = None
+_claude_client = None
+
+def get_openai_client():
+    """OpenAI 클라이언트를 lazy하게 초기화"""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    return _openai_client
+
+def get_claude_client():
+    """Claude 클라이언트를 lazy하게 초기화"""
+    global _claude_client
+    if _claude_client is None:
+        _claude_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return _claude_client
 
 
 def is_reasoning_model(model_name: str) -> bool:
@@ -69,7 +84,7 @@ async def try_model(model_name: str, topic: str, user_prompt: str) -> str | None
                 api_params["max_tokens"] = settings.DEFAULT_MAX_TOKENS
                 api_params["temperature"] = settings.DEFAULT_TEMPERATURE
 
-            resp = await openai_client.chat.completions.create(**api_params)
+            resp = await get_openai_client().chat.completions.create(**api_params)
             text = resp.choices[0].message.content
 
             # Check for empty content
@@ -82,7 +97,7 @@ async def try_model(model_name: str, topic: str, user_prompt: str) -> str | None
             return text.strip()
 
         elif model_name == "Claude":
-            resp = await claude_client.messages.create(
+            resp = await get_claude_client().messages.create(
                 model=settings.MODEL_FALLBACK,
                 max_tokens=settings.DEFAULT_MAX_TOKENS,
                 temperature=settings.DEFAULT_TEMPERATURE,

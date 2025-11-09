@@ -6,7 +6,15 @@ import datetime
 from openai import AsyncOpenAI
 from core.config import settings
 
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+# Lazy initialization: 클라이언트를 필요할 때 생성
+_openai_client = None
+
+def get_openai_client():
+    """OpenAI 클라이언트를 lazy하게 초기화"""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    return _openai_client
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System Prompt for Claude
@@ -255,7 +263,7 @@ async def fix_content(
                 api_params["max_tokens"] = 3000
                 api_params["temperature"] = 0.4
 
-            response = await openai_client.chat.completions.create(**api_params)
+            response = await get_openai_client().chat.completions.create(**api_params)
 
             # 응답 추출
             fixed_content = response.choices[0].message.content.strip()
