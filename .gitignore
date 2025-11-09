@@ -55,3 +55,8 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Test files and outputs
+test_*.py
+*_test_output.json
+generated_content.txt
