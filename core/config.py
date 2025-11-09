@@ -19,10 +19,12 @@ class Settings(BaseSettings):
     # API Keys
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
 
     # Model Configuration
     MODEL_PRIMARY: str = "gpt-4o-mini"
     MODEL_FALLBACK: str = "claude-3-5-sonnet-20241022"
+    MODEL_SEQUENCE: str = "GPT,GPT,GPT,Claude"  # Comma-separated list for generator retry sequence
 
     # Retry Configuration
     MAX_RETRIES: int = 3
@@ -36,6 +38,11 @@ class Settings(BaseSettings):
     # Model-specific Parameters
     DEFAULT_TEMPERATURE: float = 0.7
     DEFAULT_MAX_TOKENS: int = 2000
+
+    # Logging Configuration
+    LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    LOG_DIR: str = "logs"    # Directory for log files (empty string to disable file logging)
+    LOG_JSON: bool = False   # Use JSON format for logs (useful for production log aggregation)
 
     class Config:
         env_file = ".env"

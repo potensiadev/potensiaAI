@@ -129,8 +129,8 @@ async def generate_content(topic: str) -> str:
     user_prompt = USER_PROMPT_TEMPLATE.format(topic=generated_topic)
 
     # 3️⃣ 모델 실행 순서: GPT → GPT (재시도) → Claude (최종 폴백)
-    # MAX_RETRIES from settings
-    model_sequence = ["GPT"] * settings.MAX_RETRIES + ["Claude"]
+    # Read from settings.MODEL_SEQUENCE (e.g., "GPT,GPT,GPT,Claude")
+    model_sequence = [m.strip() for m in settings.MODEL_SEQUENCE.split(",")]
 
     # 4️⃣ 실행 루프 with exponential backoff
     for attempt, model in enumerate(model_sequence, start=1):
